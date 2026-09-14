@@ -1,0 +1,37 @@
+## Template for ckad-cluster.yaml, the kind cluster config.
+## scripts/generate-kind-config.sh drops the lines starting with "##" and fills the ${VARIABLE}
+## placeholders with the values in lab.env. Structure is edited here, values in lab.env.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# Cluster name (CLUSTER_NAME). `kind create cluster --name` or the KIND_CLUSTER_NAME environment
+# variable would override it.
+name: ${CLUSTER_NAME}
+networking:
+  # Pod and Service IP ranges (POD_SUBNET, SERVICE_SUBNET).
+  podSubnet: "${POD_SUBNET}"
+  serviceSubnet: "${SERVICE_SUBNET}"
+# Node image (NODE_IMAGE), repeated on every node because kind sets the image per node.
+# `kind create cluster --image ...` would override it on every node.
+nodes:
+  - role: control-plane
+    image: ${NODE_IMAGE}
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    # Host ports (INGRESS_HTTP_HOST_PORT, INGRESS_HTTPS_HOST_PORT) -> this node's ports 80/443, where
+    # the Ingress controller listens (pinned to this node by addons/ingress-nginx/kustomization.yaml).
+    # Docker binds the host ports on all host interfaces.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: ${INGRESS_HTTP_HOST_PORT}
+        protocol: TCP
+      - containerPort: 443
+        hostPort: ${INGRESS_HTTPS_HOST_PORT}
+        protocol: TCP
+  - role: worker
+    image: ${NODE_IMAGE}
+  - role: worker
+    image: ${NODE_IMAGE}

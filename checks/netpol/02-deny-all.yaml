@@ -1,0 +1,12 @@
+# NetworkPolicy enforcement check, part 2: deny all ingress traffic to every pod in the namespace.
+# After applying, http://web from client must time out. If it still answers, the CNI does not
+# enforce NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: netpol-check
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
