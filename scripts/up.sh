@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Creates the dedicated Docker network, the kind cluster and the add-ons, waiting until each is usable.
-# Runs the same steps as README.md, in the same order. Safe to re-run: existing pieces are reused.
+# Creates the dedicated container network, the kind cluster and the add-ons, waiting until each is
+# usable. The manual steps in README.md explain why each one is needed, rather than repeating them.
+# Safe to re-run: existing pieces are reused.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./lab.env
@@ -10,8 +11,8 @@ KIND_NETWORK=kind
 
 k() { kubectl --context "kind-${CLUSTER_NAME}" "$@"; }
 
-echo "==> 0/4 ckad-cluster.yaml matches lab.env"
-scripts/generate-kind-config.sh --check
+echo "==> 0/4 ckad-cluster.yaml from lab.env"
+scripts/generate-kind-config.sh
 
 echo "==> 1/4 ${CONTAINER_ENGINE} network ${KIND_NETWORK} (${KIND_NETWORK_SUBNET})"
 if "$CONTAINER_ENGINE" network inspect "$KIND_NETWORK" >/dev/null 2>&1; then
@@ -62,4 +63,4 @@ done
 echo
 k get nodes -o wide
 echo
-echo "Ready. Context: kind-${CLUSTER_NAME}. Verify with scripts/check.sh"
+echo "Ready. Context: kind-${CLUSTER_NAME}."

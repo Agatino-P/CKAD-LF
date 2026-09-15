@@ -15,7 +15,7 @@ That rationale changes the verdict on some items below: fidelity to the training
 real requirement, and a simplification that breaks fidelity is not a simplification. Each item is
 marked with whether the LF-parity goal defends it.
 
-## 1. The config templating layer
+## 1. The config templating layer — PARTLY ACTED ON 2026-09-15
 
 Files: `ckad-cluster.template.yaml`, `lab.env`, `scripts/generate-kind-config.sh`, and the generated
 `ckad-cluster.yaml`, which is itself committed.
@@ -30,8 +30,12 @@ sources that must agree. The `--check` mode in `scripts/generate-kind-config.sh`
 WARNING in `scripts/check.sh` exist only to detect them disagreeing: both are complexity whose only
 job is managing complexity introduced upstream of them.
 
-Possible cut: delete the template and the generator, hand-edit `ckad-cluster.yaml`, and keep
-`lab.env` only for the values the shell scripts genuinely read at runtime.
+Decided: `lab.env` stays as the one place holding every value, and one substitution pass is
+acceptable; the logic wrapped around it was not. `scripts/generate-kind-config.sh` went from 51
+lines to 18, losing the `--check` drift mode, the required-variable loop, the unfilled-placeholder
+scan and the diff output. `scripts/up.sh` now regenerates the config before creating the cluster,
+so the drift those checks looked for can no longer exist. The regenerated config was confirmed
+byte-identical to the previous one apart from its header comment.
 
 LF parity: does not defend this. The generator is a local convenience, not a property of the
 training environment.
@@ -72,7 +76,7 @@ network would delete all of it.
 LF parity: **defends this, and settles it.** The pinned subnet matches the training environment's
 VPC subnet, which is the stated reason it exists. Keep it. This item is closed.
 
-## 4. Cleanup machinery in scripts/check.sh
+## 4. Cleanup machinery in scripts/check.sh — SUPERSEDED 2026-09-15
 
 Roughly 35 of that script's 79 lines are namespace cleanup: `delete_test_namespaces` with a
 180-second poll loop, an EXIT trap, a cleanup pass before the checks, a cleanup pass after them, and
@@ -81,20 +85,23 @@ exit-status juggling between the two.
 What it guards against is a test namespace stuck Terminating. The recovery for that in a disposable
 lab is `scripts/down.sh` followed by `scripts/up.sh`.
 
-Possible cut: delete the test namespaces at the start of a run, drop the trap, and leave them in
-place when the run finishes. The checks themselves, meaning metrics, Ingress end to end, and
-NetworkPolicy enforcement, are the valuable part of the script and should not be touched.
+Overtaken by events: `scripts/check.sh` and `checks/` were deleted outright. The reasoning was that
+the checks track the scripts, so changing a script means changing its check, and that maintenance
+weight buys little once `scripts/up.sh` already waits for every component it installs. The one thing
+the checks tested that nothing else does is host traffic reaching a pod through the port mapping;
+the manual commands for that are gone from `README.md` too. Recover either from git history if the
+lab ever needs a regression test again.
 
 LF parity: does not defend this.
 
-## 5. README.md restating scripts/up.sh
+## 5. README.md restating scripts/up.sh — ACTED ON 2026-09-15
 
 `scripts/up.sh` states the duplication in its own header comment: it runs the same steps as
 `README.md`, in the same order. One procedure, two homes, and only one of them can drift.
 
-Possible cut: the README section points at `scripts/up.sh` and keeps only what the script cannot
-express, namely the reasons behind things: the retired ingress-nginx project, the admission webhook
-race, and the scheduling patch.
+Resolved the other way round, because running things by hand is a goal of the lab: the manual steps
+in `README.md` are the reference, and the header of `scripts/up.sh` now points at them instead of
+claiming to run the same steps in the same order.
 
 LF parity: partially defends this. Written-out manual steps serve the goal of running things by
 hand, which a script does not. If the steps stay, they are the home and the script's header should

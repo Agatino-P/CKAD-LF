@@ -8,7 +8,6 @@ Clusters are cheap to destroy and recreate, which is the point.
 
 ```bash
 scripts/up.sh      # network + cluster + metrics-server + ingress-nginx
-scripts/check.sh   # node subnet, metrics, Ingress end to end
 scripts/down.sh    # delete cluster and network
 ```
 
@@ -20,7 +19,7 @@ Every setting lives in `lab.env`. The scripts run exactly the steps documented b
 - kind, kubectl and envsubst: `brew install kind kubectl gettext` (envsubst ships with gettext).
 
 Last tested 2026-09-15 with kind v0.33.0, kubectl v1.37.0 and podman 6.1.1 on macOS (arm64),
-creating the cluster and passing `scripts/check.sh`.
+creating the cluster and reaching the Ingress over the mapped host port.
 
 The scripts call whichever engine kind uses, resolved once as `CONTAINER_ENGINE` in `lab.env`, so
 they work on podman without a `docker` binary installed.
@@ -34,11 +33,9 @@ ckad-cluster.yaml                 GENERATED kind cluster config (do not edit)
 addons/
   ingress-nginx/                  Ingress controller: vendored upstream + kustomize patch
   metrics-server/                 kubectl top / HPA support: vendored upstream + kustomize patch
-checks/
-  ingress-smoke.yaml              Ingress end-to-end check
 scripts/
-  generate-kind-config.sh         lab.env + template -> ckad-cluster.yaml (--check: verify only)
-  up.sh, check.sh, down.sh        create, verify, delete the lab
+  generate-kind-config.sh         lab.env + template -> ckad-cluster.yaml
+  up.sh, down.sh                  create and delete the lab
 shell/                            bash shortcuts and vim settings for exam speed
 ```
 
@@ -68,8 +65,8 @@ scripts/down.sh && scripts/up.sh    # every value only takes effect at creation
 Why a generated file: kind reads its config file literally and does not expand variables, so
 `scripts/generate-kind-config.sh` fills `ckad-cluster.template.yaml` with the values from `lab.env`
 and writes `ckad-cluster.yaml`. The generated file is committed, so `kind create cluster --config
-ckad-cluster.yaml` works without the script. `scripts/up.sh` runs `generate-kind-config.sh --check`
-first and stops if `ckad-cluster.yaml` does not match `lab.env`.
+ckad-cluster.yaml` works without the script. `scripts/up.sh` regenerates it before creating the
+cluster, so the two cannot drift apart.
 
 ### Kubernetes version
 
@@ -146,8 +143,8 @@ About the host ports:
   `lsof -nP -iTCP:"$INGRESS_HTTP_HOST_PORT" -sTCP:LISTEN` (no output = free).
 - The engine binds the ports on all host interfaces (`0.0.0.0`), so the host's LAN address answers too.
   Adding `listenAddress: "127.0.0.1"` to each mapping in the template restricts them to loopback.
-- `scripts/check.sh` reads the port the running cluster actually maps from the engine, and warns when it
-  differs from `lab.env` (a cluster created before the value changed).
+- A running cluster keeps the ports it was created with. After changing them in `lab.env`, recreate
+  the cluster; `"$CONTAINER_ENGINE" port "$CLUSTER_NAME-control-plane" 80/tcp` shows what it maps now.
 
 Included by kind without extra setup: the kindnet CNI and the `standard` StorageClass (Rancher
 local-path provisioner), so PVC exercises work immediately.
@@ -212,31 +209,6 @@ Notes:
 - **A new Ingress takes a few seconds.** After an Ingress is created the controller reloads nginx
   (about 3 s in testing); until then the Ingress URL answers 404. The `ADDRESS` column fills in later
   still (about 25 s), so it is not a readiness signal.
-
-## 5. Checks
-
-`scripts/check.sh` runs all of these and exits non-zero on the first failure. The script works only
-in the namespace `ingress-smoke`: it deletes that namespace before starting (leftovers of an earlier
-run), and on exit, pass or fail, deletes it again and waits until it is gone (up to 180 s; a cleanup
-that does not finish also makes the script exit non-zero). Running it on a cluster in use is safe as
-long as nothing else lives in that namespace.
-
-### Node subnet
-
-```bash
-kubectl get nodes -o custom-columns='NAME:.metadata.name,INTERNAL-IP:.status.addresses[?(@.type=="InternalIP")].address'
-"$CONTAINER_ENGINE" network inspect kind | grep "\"$KIND_NETWORK_SUBNET\""   # expect one match
-```
-
-### Ingress
-
-```bash
-kubectl apply -f checks/ingress-smoke.yaml
-kubectl -n ingress-smoke rollout status deployment/echo --timeout=120s
-until curl -fsS -o /dev/null "http://localhost:$INGRESS_HTTP_HOST_PORT/"; do sleep 1; done
-curl -s "http://localhost:$INGRESS_HTTP_HOST_PORT/" | grep '<title>'   # <title>Welcome to nginx!</title>
-kubectl delete namespace ingress-smoke
-```
 
 ## Teardown
 
