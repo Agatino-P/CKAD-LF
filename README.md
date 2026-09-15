@@ -19,7 +19,11 @@ Every setting lives in `lab.env`. The scripts run exactly the steps documented b
 - A container runtime kind supports: Docker Desktop, OrbStack, Colima or Podman.
 - kind, kubectl and envsubst: `brew install kind kubectl gettext` (envsubst ships with gettext).
 
-Last tested 2026-09-14 with kind v0.33.0, kubectl v1.36.1, Docker Desktop 29.7.2 on macOS (arm64).
+Last tested 2026-09-15 with kind v0.33.0, kubectl v1.37.0 and podman 6.1.1 on macOS (arm64),
+creating the cluster and passing `scripts/check.sh`.
+
+The scripts call whichever engine kind uses, resolved once as `CONTAINER_ENGINE` in `lab.env`, so
+they work on podman without a `docker` binary installed.
 
 ## Layout
 

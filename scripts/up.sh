@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./lab.env
 
-# kind attaches nodes to the Docker network named "kind" and reuses that network as-is if it exists.
+# kind attaches nodes to the container network named "kind" and reuses that network as-is if it exists.
 KIND_NETWORK=kind
 
 k() { kubectl --context "kind-${CLUSTER_NAME}" "$@"; }
@@ -13,25 +13,21 @@ k() { kubectl --context "kind-${CLUSTER_NAME}" "$@"; }
 echo "==> 0/4 ckad-cluster.yaml matches lab.env"
 scripts/generate-kind-config.sh --check
 
-echo "==> 1/4 Docker network ${KIND_NETWORK} (${KIND_NETWORK_SUBNET})"
-if docker network inspect "$KIND_NETWORK" >/dev/null 2>&1; then
-  actual=$(docker network inspect "$KIND_NETWORK" --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}')
-  case " $actual " in
-    *" ${KIND_NETWORK_SUBNET} "*) echo "exists with the expected subnet" ;;
-    *) echo "network ${KIND_NETWORK} exists with subnet(s) '${actual}', expected ${KIND_NETWORK_SUBNET}." >&2
-       echo "Delete every kind cluster using it (kind get clusters), then: docker network rm ${KIND_NETWORK}" >&2
-       exit 1 ;;
-  esac
+echo "==> 1/4 ${CONTAINER_ENGINE} network ${KIND_NETWORK} (${KIND_NETWORK_SUBNET})"
+if "$CONTAINER_ENGINE" network inspect "$KIND_NETWORK" >/dev/null 2>&1; then
+  # Matched against the raw JSON rather than a --format template: docker nests the subnet under
+  # IPAM.Config and podman puts it in a top-level subnets array, but both quote the value verbatim.
+  if "$CONTAINER_ENGINE" network inspect "$KIND_NETWORK" | grep -q "\"${KIND_NETWORK_SUBNET}\""; then
+    echo "exists with the expected subnet"
+  else
+    echo "network ${KIND_NETWORK} exists with a different subnet, expected ${KIND_NETWORK_SUBNET}." >&2
+    echo "Delete every kind cluster using it (kind get clusters), then: ${CONTAINER_ENGINE} network rm ${KIND_NETWORK}" >&2
+    exit 1
+  fi
 else
-  # Same options kind uses when it creates its own network: bridge driver, IP masquerade,
-  # and the MTU of Docker's default bridge network.
-  mtu=$(docker network inspect bridge --format '{{index .Options "com.docker.network.driver.mtu"}}' 2>/dev/null || true)
-  [[ "$mtu" =~ ^[0-9]+$ ]] || mtu=""
-  docker network create -d bridge \
-    -o com.docker.network.bridge.enable_ip_masquerade=true \
-    ${mtu:+-o com.docker.network.driver.mtu=${mtu}} \
-    --subnet "$KIND_NETWORK_SUBNET" \
-    "$KIND_NETWORK"
+  # No MTU or masquerade options: both engines masquerade by default and give a new bridge network
+  # an MTU of 1500, and the option keys for setting them differ between docker and podman.
+  "$CONTAINER_ENGINE" network create -d bridge --subnet "$KIND_NETWORK_SUBNET" "$KIND_NETWORK"
 fi
 
 echo "==> 2/4 kind cluster ${CLUSTER_NAME}"

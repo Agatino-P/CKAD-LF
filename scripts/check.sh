@@ -48,8 +48,8 @@ k get nodes -o custom-columns='NAME:.metadata.name,INTERNAL-IP:.status.addresses
 echo "==> metrics"
 k top nodes || fail "kubectl top nodes"
 
-# Host port that Docker maps to the control-plane node's port 80 (extraPortMappings in ckad-cluster.yaml).
-http_port=$(docker port "${CLUSTER_NAME}-control-plane" 80/tcp | sed -n '1s/.*://p')
+# Host port the engine maps to the control-plane node's port 80 (extraPortMappings in ckad-cluster.yaml).
+http_port=$("$CONTAINER_ENGINE" port "${CLUSTER_NAME}-control-plane" 80/tcp | sed -n '1s/.*://p')
 [[ -n "$http_port" ]] || fail "no host port mapped to ${CLUSTER_NAME}-control-plane:80"
 if [[ "$http_port" != "$INGRESS_HTTP_HOST_PORT" ]]; then
   echo "WARNING: the cluster maps host port ${http_port}, lab.env says ${INGRESS_HTTP_HOST_PORT};" \
