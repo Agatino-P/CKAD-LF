@@ -1,0 +1,21 @@
+# ingress-nginx controller for kind.
+# upstream/deploy.yaml is the unmodified kind provider manifest from
+#   https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/kind/deploy.yaml
+# controller-v1.15.1 is the last release; the ingress-nginx project is archived (retired March 2026).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - upstream/deploy.yaml
+patches:
+  # Upstream selects only kubernetes.io/os=linux. The control-plane toleration *allows* the
+  # control-plane node but does not *require* it, so with worker nodes present the controller
+  # can land on a worker. The host port mappings (see ckad-cluster.yaml) lead only to the
+  # control-plane container's ports 80/443, so the controller must run there.
+  - target:
+      kind: Deployment
+      name: ingress-nginx-controller
+      namespace: ingress-nginx
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector/ingress-ready
+        value: "true"
