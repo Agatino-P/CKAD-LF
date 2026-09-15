@@ -1,8 +1,6 @@
 # CKAD-LF — local kind lab for CKAD practice
 
-A disposable Kubernetes cluster on a laptop, built with [kind](https://kind.sigs.k8s.io/) (Kubernetes
-in Docker), for Certified Kubernetes Application Developer (CKAD) practice. No cloud account needed.
-Clusters are cheap to destroy and recreate, which is the point.
+A disposable [kind](https://kind.sigs.k8s.io/) cluster on a laptop, for CKAD practice.
 
 ## Quick start
 
@@ -11,23 +9,17 @@ scripts/up.sh      # network + cluster + metrics-server + ingress-nginx
 scripts/down.sh    # delete cluster and network
 ```
 
-Every setting lives in `lab.env`. The scripts run exactly the steps documented below.
-
 ## Prerequisites
 
 - A container runtime kind supports: Docker Desktop, OrbStack, Colima or Podman.
 - kind, kubectl and envsubst: `brew install kind kubectl gettext` (envsubst ships with gettext).
 
-Last tested 2026-09-15 with kind v0.33.0, kubectl v1.37.0 and podman 6.1.1 on macOS (arm64),
-creating the cluster and reaching the Ingress over the mapped host port.
-
-The scripts call whichever engine kind uses, resolved once as `CONTAINER_ENGINE` in `lab.env`, so
-they work on podman without a `docker` binary installed.
+Last tested 2026-09-15: kind v0.33.0, kubectl v1.37.0, podman 6.1.1, macOS arm64.
 
 ## Layout
 
 ```
-lab.env                           every setting: the single place to change values
+lab.env                           every setting
 ckad-cluster.template.yaml        kind cluster config structure, with ${VARIABLE} placeholders
 ckad-cluster.yaml                 GENERATED kind cluster config (do not edit)
 addons/
@@ -36,127 +28,44 @@ addons/
 scripts/
   generate-kind-config.sh         lab.env + template -> ckad-cluster.yaml
   up.sh, down.sh                  create and delete the lab
-shell/                            bash shortcuts and vim settings for exam speed
 ```
-
-Upstream manifests under `addons/*/upstream/` are unmodified copies; every change lives in the
-`kustomization.yaml` next to them, with the reason.
 
 ## Settings
 
-All values live in `lab.env`, each with a comment explaining the choice.
+Every value lives in `lab.env`, commented; its header says how to apply a change.
 
-| Variable | Controls |
-|---|---|
-| `CLUSTER_NAME` | kind cluster name; kubectl context `kind-<CLUSTER_NAME>` |
-| `KIND_NETWORK_SUBNET` | subnet of the container network `kind`, i.e. the node IPs |
-| `NODE_IMAGE` | image of every node, i.e. the Kubernetes version |
-| `POD_SUBNET`, `SERVICE_SUBNET` | pod and Service IP ranges |
-| `INGRESS_HTTP_HOST_PORT`, `INGRESS_HTTPS_HOST_PORT` | host ports leading to the Ingress controller (control-plane ports 80/443) |
-
-Changing a value:
-
-```bash
-vim lab.env
-scripts/generate-kind-config.sh     # regenerates ckad-cluster.yaml
-scripts/down.sh && scripts/up.sh    # every value only takes effect at creation
-```
-
-Why a generated file: kind reads its config file literally and does not expand variables, so
-`scripts/generate-kind-config.sh` fills `ckad-cluster.template.yaml` with the values from `lab.env`
-and writes `ckad-cluster.yaml`. The generated file is committed, so `kind create cluster --config
-ckad-cluster.yaml` works without the script. `scripts/up.sh` regenerates it before creating the
-cluster, so the two cannot drift apart.
-
-### Kubernetes version
-
-`NODE_IMAGE` is pinned to the Kubernetes minor version the CKAD exam runs.
-
-- On 2026-09-14 the exam was on **v1.35**, although upstream had already released v1.36 and v1.37.
-- Check before an exam: the [CKAD page](https://training.linuxfoundation.org/certification/certified-kubernetes-application-developer-ckad/)
-  states "The exam is based on Kubernetes vX.Y", and the [cncf/curriculum](https://github.com/cncf/curriculum)
-  repo holds `CKAD_Curriculum_vX.Y.pdf`.
-- To change version, take the `kindest/node` image **with its `@sha256` digest** from the release
-  notes of the installed kind version (`kind version`). kind's release notes say a bare tag is not
-  guaranteed to match the release.
-- kind has no cluster-wide image field, so the template repeats `${NODE_IMAGE}` on every node.
-- `kind create cluster --image <image>` overrides the image on every node, handy for a one-off try.
-
-kubectl works against API servers one minor version older or newer than kubectl itself.
+Before bumping `NODE_IMAGE`, check which version the exam runs: the [CKAD page](https://training.linuxfoundation.org/certification/certified-kubernetes-application-developer-ckad/)
+states "The exam is based on Kubernetes vX.Y" and [cncf/curriculum](https://github.com/cncf/curriculum)
+holds `CKAD_Curriculum_vX.Y.pdf`.
 
 ## Manual steps
 
-The commands below read the settings from the shell, so load them first (bash):
+Load the settings first (bash):
 
 ```bash
 source lab.env
 ```
 
-## 1. Container network `kind` with the node subnet
+### 1. Container network `kind` with the node subnet
 
 ```bash
 "$CONTAINER_ENGINE" network create -d bridge --subnet "$KIND_NETWORK_SUBNET" kind
 ```
 
-How kind picks node networking:
+kind reuses an existing network named `kind` as-is, so creating it first is how the node subnet is
+chosen.
 
-- kind attaches every node of every cluster to the container network named `kind`. If the network
-  does not exist, kind creates it with a subnet the engine picks; if it exists, kind uses it as-is.
-  So creating the network before the cluster is how the node subnet is chosen.
-- Only the subnet is worth specifying. Both docker and podman masquerade a bridge network by
-  default and give it an MTU of 1500, and the option keys for setting either differ between the two
-  engines. kind also adds an IPv6 subnet; that only matters for `ipFamily: ipv6` or `dual`
-  clusters, and this cluster is IPv4.
-- If `kind` already exists with a different subnet, delete every kind cluster using it
-  (`kind get clusters`) and `"$CONTAINER_ENGINE" network rm kind` first; `scripts/up.sh` stops with
-  that message.
-- The engine assigns node IPs from the subnet; kind has no per-node IP setting. Nodes start in
-  parallel, so which node gets which address varies between clusters.
-- Node IPs are not reachable from the Mac, under either engine, because both run the containers
-  inside a Linux VM; traffic enters through the port mappings in the kind config.
-- The subnet must not overlap other networks on the same engine (`network create` refuses with a
-  pool overlap error) or the pod and Service ranges.
+### 2. Create the cluster
 
-## 2. Create the cluster
+Check the host ports are free first:
+`lsof -nP -iTCP:"$INGRESS_HTTP_HOST_PORT" -sTCP:LISTEN` (no output = free).
 
 ```bash
 kind create cluster --config ckad-cluster.yaml
 kubectl wait --for=condition=Ready nodes --all --timeout=180s
 ```
 
-`ckad-cluster.yaml` (generated from the template) defines:
-
-- the cluster name `CLUSTER_NAME`; `--name` or an exported `KIND_CLUSTER_NAME` would override it;
-- one control-plane node and two worker nodes, all on `NODE_IMAGE`;
-- label `ingress-ready=true` on the control-plane node, plus host ports `INGRESS_HTTP_HOST_PORT` → 80
-  and `INGRESS_HTTPS_HOST_PORT` → 443 into the control-plane container, so an Ingress controller
-  running there answers on `http://localhost:$INGRESS_HTTP_HOST_PORT`;
-- pod range `POD_SUBNET` and Service range `SERVICE_SUBNET`.
-
-About the host ports:
-
-- High ports avoid clashing with web servers and dev tools already bound to 80/443. Good choices are
-  unassigned in the [IANA port registry](https://www.iana.org/assignments/service-names-port-numbers/)
-  and outside the Kubernetes NodePort range (30000–32767) and the macOS ephemeral port range
-  (49152–65535).
-- Check a port is free before creating the cluster:
-  `lsof -nP -iTCP:"$INGRESS_HTTP_HOST_PORT" -sTCP:LISTEN` (no output = free).
-- The engine binds the ports on all host interfaces (`0.0.0.0`), so the host's LAN address answers too.
-  Adding `listenAddress: "127.0.0.1"` to each mapping in the template restricts them to loopback.
-- A running cluster keeps the ports it was created with. After changing them in `lab.env`, recreate
-  the cluster; `"$CONTAINER_ENGINE" port "$CLUSTER_NAME-control-plane" 80/tcp` shows what it maps now.
-
-Included by kind without extra setup: the kindnet CNI and the `standard` StorageClass (Rancher
-local-path provisioner), so PVC exercises work immediately.
-
-kindnet enforces NetworkPolicy: verified 2026-09-15 on the `NODE_IMAGE` digest pinned in `lab.env`
-at that date, by applying a deny-all policy and confirming a previously reachable Service stopped
-answering. Older kindnet versions accepted policy objects and ignored them, which matters because a
-policy that is silently not enforced makes a wrong answer look correct. The check was a one-off: the
-CNI ships inside the pinned node image, so the result cannot change until that digest is bumped.
-Re-run it then, with `git log` on this file to find the harness that was used.
-
-## 3. metrics-server
+### 3. metrics-server
 
 ```bash
 kubectl apply -k addons/metrics-server
@@ -165,50 +74,16 @@ kubectl wait --for=condition=Available apiservice/v1beta1.metrics.k8s.io --timeo
 kubectl top nodes
 ```
 
-The kustomization adds `--kubelet-insecure-tls`; without the flag metrics-server fails TLS
-verification against kind's kubelets.
-
-## 4. Ingress controller (ingress-nginx)
+### 4. Ingress controller (ingress-nginx)
 
 ```bash
 kubectl apply -k addons/ingress-nginx
 kubectl -n ingress-nginx rollout status deployment/ingress-nginx-controller --timeout=240s
 
-# Wait until the admission webhook accepts requests (see "Webhook refused" below).
+# The admission webhook refuses connections for a moment after the controller is Ready.
 until kubectl create ingress webhook-probe --class=nginx --rule='/*=webhook-probe:80' \
     --dry-run=server -o name >/dev/null 2>&1; do sleep 1; done
 ```
-
-Notes:
-
-- **Retired project.** ingress-nginx was archived in March 2026; `controller-v1.15.1` is its last
-  release and receives no fixes. The CKAD curriculum tests Ingress *objects* ("Use Ingress rules to
-  expose applications"), which any controller serves. Actively maintained alternative:
-  [cloud-provider-kind](https://github.com/kubernetes-sigs/cloud-provider-kind), which implements
-  Ingress, Gateway API and LoadBalancer, but on macOS must run as a separate `sudo` process and
-  exposes services on ephemeral localhost ports.
-- **Scheduling patch.** Host traffic reaches the cluster in two hops that must meet on the same
-  node. Hop 1 is the container engine: `extraPortMappings` in `ckad-cluster.yaml` publishes
-  `$INGRESS_HTTP_HOST_PORT`/`$INGRESS_HTTPS_HOST_PORT` to ports 80/443 of the *control-plane
-  container only*. Hop 2 is the controller pod, which listens with `hostPort: 80/443` on *whichever
-  node it is scheduled on*; no Service is involved. Upstream's kind manifest selects only
-  `kubernetes.io/os=linux` and merely *tolerates* the control-plane taint, so with worker nodes
-  present the scheduler may place the controller on a worker. The engine then forwards the request to
-  control-plane container, where nothing listens on port 80, and
-  `curl http://localhost:$INGRESS_HTTP_HOST_PORT` gets "Empty reply from server" even though the pod
-  is Running and Ready. The kustomization adds `nodeSelector: ingress-ready=true`, the label the kind
-  config puts on the control-plane node, so both hops land on the same container. On a single-node
-  cluster the problem cannot occur.
-- **Webhook refused.** Creating an Ingress within a second or two of the controller becoming Ready
-  can fail with `failed calling webhook "validate.nginx.ingress.kubernetes.io" ... connection
-  refused`. The same error is returned whenever the admission Service has no ready endpoint; the
-  exact cause of the post-Ready window was not proven. The dry-run loop above waits it out.
-- **Service stays `<pending>`.** `ingress-nginx-controller` is a LoadBalancer Service and kind has no
-  cloud provider, so `EXTERNAL-IP` stays `<pending>`. Harmless: traffic arrives through the host
-  port on the control-plane node.
-- **A new Ingress takes a few seconds.** After an Ingress is created the controller reloads nginx
-  (about 3 s in testing); until then the Ingress URL answers 404. The `ADDRESS` column fills in later
-  still (about 25 s), so it is not a readiness signal.
 
 ## Teardown
 
@@ -216,20 +91,3 @@ Notes:
 kind delete cluster --name "$CLUSTER_NAME"
 "$CONTAINER_ENGINE" network rm kind
 ```
-
-`kind delete cluster` removes the `kind-<CLUSTER_NAME>` kubeconfig entries and the node containers
-with their volumes, but not the network. The network `kind` is shared by all kind clusters;
-`network rm` refuses while any container is still attached. Everything removed is recreated
-by the steps above.
-
-## Exam-speed shell
-
-The exam terminal is bash with vim.
-
-```bash
-source shell/ckad.bashrc      # alias k, completion for k, $do and $now shortcuts
-vim -u shell/vimrc pod.yaml   # 2-space YAML indentation, line numbers
-```
-
-To make the settings permanent, copy the lines from `shell/ckad.bashrc` into `~/.bashrc` and from
-`shell/vimrc` into `~/.vimrc`.
