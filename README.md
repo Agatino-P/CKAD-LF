@@ -52,7 +52,7 @@ All values live in `lab.env`, each with a comment explaining the choice.
 | Variable | Controls |
 |---|---|
 | `CLUSTER_NAME` | kind cluster name; kubectl context `kind-<CLUSTER_NAME>` |
-| `KIND_NETWORK_SUBNET` | subnet of the Docker network `kind`, i.e. the node IPs |
+| `KIND_NETWORK_SUBNET` | subnet of the container network `kind`, i.e. the node IPs |
 | `NODE_IMAGE` | image of every node, i.e. the Kubernetes version |
 | `POD_SUBNET`, `SERVICE_SUBNET` | pod and Service IP ranges |
 | `INGRESS_HTTP_HOST_PORT`, `INGRESS_HTTPS_HOST_PORT` | host ports leading to the Ingress controller (control-plane ports 80/443) |
@@ -95,35 +95,30 @@ The commands below read the settings from the shell, so load them first (bash):
 source lab.env
 ```
 
-## 1. Docker network `kind` with the node subnet
+## 1. Container network `kind` with the node subnet
 
 ```bash
-MTU=$(docker network inspect bridge --format '{{index .Options "com.docker.network.driver.mtu"}}')
-docker network create -d bridge \
-  -o com.docker.network.bridge.enable_ip_masquerade=true \
-  -o com.docker.network.driver.mtu="$MTU" \
-  --subnet "$KIND_NETWORK_SUBNET" \
-  kind
+"$CONTAINER_ENGINE" network create -d bridge --subnet "$KIND_NETWORK_SUBNET" kind
 ```
-
-(If `MTU` comes back empty, drop the `mtu` option line.)
 
 How kind picks node networking:
 
-- kind attaches every node of every cluster to the Docker network named `kind`. If the network
-  does not exist, kind creates it with a subnet Docker picks; if it exists, kind uses it as-is. So
-  creating the network before the cluster is how the node subnet is chosen.
-- The options above are the ones kind itself uses when creating the network (bridge driver, IP
-  masquerade, MTU of Docker's default bridge network), plus the subnet. kind also adds an IPv6
-  subnet; that only matters for `ipFamily: ipv6` or `dual` clusters, and this cluster is IPv4.
+- kind attaches every node of every cluster to the container network named `kind`. If the network
+  does not exist, kind creates it with a subnet the engine picks; if it exists, kind uses it as-is.
+  So creating the network before the cluster is how the node subnet is chosen.
+- Only the subnet is worth specifying. Both docker and podman masquerade a bridge network by
+  default and give it an MTU of 1500, and the option keys for setting either differ between the two
+  engines. kind also adds an IPv6 subnet; that only matters for `ipFamily: ipv6` or `dual`
+  clusters, and this cluster is IPv4.
 - If `kind` already exists with a different subnet, delete every kind cluster using it
-  (`kind get clusters`) and `docker network rm kind` first; `scripts/up.sh` stops with that message.
-- Docker assigns node IPs from the subnet; kind has no per-node IP setting. Nodes start in
+  (`kind get clusters`) and `"$CONTAINER_ENGINE" network rm kind` first; `scripts/up.sh` stops with
+  that message.
+- The engine assigns node IPs from the subnet; kind has no per-node IP setting. Nodes start in
   parallel, so which node gets which address varies between clusters.
-- On Docker Desktop, node IPs are not reachable from the Mac; traffic enters through the port
-  mappings in the kind config.
-- The subnet must not overlap other Docker networks (`docker network create` refuses with a pool
-  overlap error) or the pod and Service ranges.
+- Node IPs are not reachable from the Mac, under either engine, because both run the containers
+  inside a Linux VM; traffic enters through the port mappings in the kind config.
+- The subnet must not overlap other networks on the same engine (`network create` refuses with a
+  pool overlap error) or the pod and Service ranges.
 
 ## 2. Create the cluster
 
@@ -149,9 +144,9 @@ About the host ports:
   (49152–65535).
 - Check a port is free before creating the cluster:
   `lsof -nP -iTCP:"$INGRESS_HTTP_HOST_PORT" -sTCP:LISTEN` (no output = free).
-- Docker binds the ports on all host interfaces (`0.0.0.0`), so the host's LAN address answers too.
+- The engine binds the ports on all host interfaces (`0.0.0.0`), so the host's LAN address answers too.
   Adding `listenAddress: "127.0.0.1"` to each mapping in the template restricts them to loopback.
-- `scripts/check.sh` reads the port the running cluster actually maps from Docker, and warns when it
+- `scripts/check.sh` reads the port the running cluster actually maps from the engine, and warns when it
   differs from `lab.env` (a cluster created before the value changed).
 
 Included by kind without extra setup: the kindnet CNI and the `standard` StorageClass (Rancher
@@ -196,12 +191,12 @@ Notes:
   Ingress, Gateway API and LoadBalancer, but on macOS must run as a separate `sudo` process and
   exposes services on ephemeral localhost ports.
 - **Scheduling patch.** Host traffic reaches the cluster in two hops that must meet on the same
-  node. Hop 1 is Docker: `extraPortMappings` in `ckad-cluster.yaml` publishes
+  node. Hop 1 is the container engine: `extraPortMappings` in `ckad-cluster.yaml` publishes
   `$INGRESS_HTTP_HOST_PORT`/`$INGRESS_HTTPS_HOST_PORT` to ports 80/443 of the *control-plane
   container only*. Hop 2 is the controller pod, which listens with `hostPort: 80/443` on *whichever
   node it is scheduled on*; no Service is involved. Upstream's kind manifest selects only
   `kubernetes.io/os=linux` and merely *tolerates* the control-plane taint, so with worker nodes
-  present the scheduler may place the controller on a worker. Docker then forwards the request to the
+  present the scheduler may place the controller on a worker. The engine then forwards the request to
   control-plane container, where nothing listens on port 80, and
   `curl http://localhost:$INGRESS_HTTP_HOST_PORT` gets "Empty reply from server" even though the pod
   is Running and Ready. The kustomization adds `nodeSelector: ingress-ready=true`, the label the kind
@@ -230,7 +225,7 @@ long as nothing else lives in that namespace.
 
 ```bash
 kubectl get nodes -o custom-columns='NAME:.metadata.name,INTERNAL-IP:.status.addresses[?(@.type=="InternalIP")].address'
-docker network inspect kind --format '{{range .IPAM.Config}}{{.Subnet}} {{end}}'   # expect KIND_NETWORK_SUBNET
+"$CONTAINER_ENGINE" network inspect kind | grep "\"$KIND_NETWORK_SUBNET\""   # expect one match
 ```
 
 ### Ingress
@@ -247,12 +242,12 @@ kubectl delete namespace ingress-smoke
 
 ```bash
 kind delete cluster --name "$CLUSTER_NAME"
-docker network rm kind
+"$CONTAINER_ENGINE" network rm kind
 ```
 
 `kind delete cluster` removes the `kind-<CLUSTER_NAME>` kubeconfig entries and the node containers
 with their volumes, but not the network. The network `kind` is shared by all kind clusters;
-`docker network rm` refuses while any container is still attached. Everything removed is recreated
+`network rm` refuses while any container is still attached. Everything removed is recreated
 by the steps above.
 
 ## Exam-speed shell

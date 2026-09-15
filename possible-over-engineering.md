@@ -151,10 +151,12 @@ of the training environment.
 
 ## Addendum: this machine runs podman, not Docker
 
-Verified 2026-09-15 on the machine holding this clone. This is a correctness problem, not an
-over-engineering one, but it changes the verdict on item 3.
+Verified 2026-09-15 on the machine holding this clone, and **resolved the same day**: the scripts
+now call `CONTAINER_ENGINE` from `lab.env`, and the cluster has been created and checked on podman.
+This was a correctness problem, not an over-engineering one. It did not change the verdict on
+item 3.
 
-Findings:
+Findings, kept because they explain why the fix looks the way it does:
 
 - There is no `docker` binary installed. `which -a docker` finds nothing. `podman` 6.1.1 is the
   only container engine, with a running `podman-machine-default` VM on the applehv backend.
@@ -175,6 +177,17 @@ Findings:
 - `podman network create --subnet` and `-o mtu=` both work, so the pinned subnet from item 3
   survives in podman-native form.
 
-Not yet verified, and only an actual cluster run will settle it: whether kind's `extraPortMappings`
-host ports reach macOS through the podman machine VM, and whether rootless podman needs further
-setup for kind.
+Settled by running the lab rather than by reasoning about it, on 2026-09-15:
+
+- kind's `extraPortMappings` do reach macOS through the podman machine VM. The Ingress smoke check
+  in `scripts/check.sh` fetched the nginx welcome page over the mapped host port.
+
+- Podman needed no further setup for kind beyond the `KIND_EXPERIMENTAL_PROVIDER` already exported
+  in the shell environment. The cluster came up first try.
+
+- Node IPs landed inside the pinned subnet, so the training-environment parity of item 3 survives
+  the move to podman.
+
+Several concerns raised while investigating turned out to cost nothing: the MTU of the bridge
+network, IP masquerading, and whether the host port mappings would survive the VM. They are recorded
+here as settled so that a future reader does not re-open them.
