@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Verifies the lab: node subnet, metrics, Ingress end to end, NetworkPolicy enforcement.
-# Applies the manifests under checks/ into the test namespaces below, and on exit (pass or fail)
-# deletes those namespaces and waits until they are gone. Nothing else in the cluster is touched.
+# Verifies the lab: node subnet, metrics, Ingress end to end.
+# Applies the manifests under checks/ into the test namespace below, and on exit (pass or fail)
+# deletes that namespace and waits until it is gone. Nothing else in the cluster is touched.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source ./lab.env
 
-TEST_NAMESPACES=(ingress-smoke netpol-check)
+TEST_NAMESPACES=(ingress-smoke)
 CLEANUP_TIMEOUT_SECONDS=180
 
 k() { kubectl --context "kind-${CLUSTER_NAME}" "$@"; }
@@ -67,13 +67,3 @@ done
 [[ "${ingress_ok:-}" == 1 ]] || fail "${ingress_url} did not return 2xx within 60 s"
 curl -s "$ingress_url" | grep -o '<title>.*</title>'
 
-echo "==> NetworkPolicy enforcement"
-k apply -f checks/netpol/01-workloads.yaml
-k -n netpol-check wait --for=condition=Ready pod/web pod/client --timeout=120s
-k -n netpol-check exec client -- wget -qO- -T 3 http://web >/dev/null || fail "web unreachable before any policy"
-echo "before deny-all: reachable"
-k apply -f checks/netpol/02-deny-all.yaml
-if k -n netpol-check exec client -- wget -qO- -T 3 http://web >/dev/null 2>&1; then
-  fail "web still reachable after deny-all: the CNI does not enforce NetworkPolicy"
-fi
-echo "after deny-all: blocked"

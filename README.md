@@ -8,7 +8,7 @@ Clusters are cheap to destroy and recreate, which is the point.
 
 ```bash
 scripts/up.sh      # network + cluster + metrics-server + ingress-nginx
-scripts/check.sh   # node subnet, metrics, Ingress end to end, NetworkPolicy enforcement
+scripts/check.sh   # node subnet, metrics, Ingress end to end
 scripts/down.sh    # delete cluster and network
 ```
 
@@ -36,7 +36,6 @@ addons/
   metrics-server/                 kubectl top / HPA support: vendored upstream + kustomize patch
 checks/
   ingress-smoke.yaml              Ingress end-to-end check
-  netpol/                         NetworkPolicy enforcement check (two steps)
 scripts/
   generate-kind-config.sh         lab.env + template -> ckad-cluster.yaml (--check: verify only)
   up.sh, check.sh, down.sh        create, verify, delete the lab
@@ -155,8 +154,15 @@ About the host ports:
 - `scripts/check.sh` reads the port the running cluster actually maps from Docker, and warns when it
   differs from `lab.env` (a cluster created before the value changed).
 
-Included by kind without extra setup: the kindnet CNI (enforces NetworkPolicy; see checks) and the
-`standard` StorageClass (Rancher local-path provisioner), so PVC exercises work immediately.
+Included by kind without extra setup: the kindnet CNI and the `standard` StorageClass (Rancher
+local-path provisioner), so PVC exercises work immediately.
+
+kindnet enforces NetworkPolicy: verified 2026-09-15 on the `NODE_IMAGE` digest pinned in `lab.env`
+at that date, by applying a deny-all policy and confirming a previously reachable Service stopped
+answering. Older kindnet versions accepted policy objects and ignored them, which matters because a
+policy that is silently not enforced makes a wrong answer look correct. The check was a one-off: the
+CNI ships inside the pinned node image, so the result cannot change until that digest is bumped.
+Re-run it then, with `git log` on this file to find the harness that was used.
 
 ## 3. metrics-server
 
@@ -215,10 +221,10 @@ Notes:
 ## 5. Checks
 
 `scripts/check.sh` runs all of these and exits non-zero on the first failure. The script works only
-in the namespaces `ingress-smoke` and `netpol-check`: it deletes both before starting (leftovers of an
-earlier run), and on exit, pass or fail, deletes both again and waits until they are gone (up to
-180 s; a cleanup that does not finish also makes the script exit non-zero). Running it on a cluster
-in use is safe as long as nothing else lives in those two namespaces.
+in the namespace `ingress-smoke`: it deletes that namespace before starting (leftovers of an earlier
+run), and on exit, pass or fail, deletes it again and waits until it is gone (up to 180 s; a cleanup
+that does not finish also makes the script exit non-zero). Running it on a cluster in use is safe as
+long as nothing else lives in that namespace.
 
 ### Node subnet
 
@@ -236,25 +242,6 @@ until curl -fsS -o /dev/null "http://localhost:$INGRESS_HTTP_HOST_PORT/"; do sle
 curl -s "http://localhost:$INGRESS_HTTP_HOST_PORT/" | grep '<title>'   # <title>Welcome to nginx!</title>
 kubectl delete namespace ingress-smoke
 ```
-
-### NetworkPolicy enforcement
-
-Older kindnet versions did not enforce NetworkPolicy, so verify before trusting policy exercises.
-
-```bash
-kubectl apply -f checks/netpol/01-workloads.yaml
-kubectl -n netpol-check wait --for=condition=Ready pod/web pod/client --timeout=120s
-kubectl -n netpol-check exec client -- wget -qO- -T 3 http://web    # expect: nginx HTML
-
-kubectl apply -f checks/netpol/02-deny-all.yaml
-kubectl -n netpol-check exec client -- wget -qO- -T 3 http://web    # expect: fails after ~3 s
-
-kubectl delete namespace netpol-check
-```
-
-If the second `wget` still returns HTML, the CNI is not enforcing policies: add
-`disableDefaultCNI: true` under `networking` in `ckad-cluster.template.yaml`, regenerate, recreate the
-cluster and install Calico.
 
 ## Teardown
 
