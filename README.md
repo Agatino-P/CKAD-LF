@@ -8,7 +8,6 @@ Clusters are cheap to destroy and recreate, which is the point.
 
 ```bash
 scripts/up.sh      # network + cluster + metrics-server + ingress-nginx
-scripts/check.sh   # node subnet, metrics, Ingress end to end, NetworkPolicy enforcement
 scripts/down.sh    # delete cluster and network
 ```
 
@@ -148,8 +147,7 @@ About the host ports:
   `lsof -nP -iTCP:"$INGRESS_HTTP_HOST_PORT" -sTCP:LISTEN` (no output = free).
 - Docker binds the ports on all host interfaces (`0.0.0.0`), so the host's LAN address answers too.
   Adding `listenAddress: "127.0.0.1"` to each mapping in the template restricts them to loopback.
-- `scripts/check.sh` reads the port the running cluster actually maps from Docker, and warns when it
-  differs from `lab.env` (a cluster created before the value changed).
+- After a port setting changes, recreate the cluster before expecting the new mapping to apply.
 
 Included by kind without extra setup: the kindnet CNI (enforces NetworkPolicy; see checks) and the
 `standard` StorageClass (Rancher local-path provisioner), so PVC exercises work immediately.
@@ -200,13 +198,7 @@ Notes:
   (about 3 s in testing); until then the Ingress URL answers 404. The `ADDRESS` column fills in later
   still (about 25 s), so it is not a readiness signal.
 
-## 5. Checks
-
-`scripts/check.sh` runs all of these and exits non-zero on the first failure. The script works only
-in the namespaces `ingress-smoke` and `netpol-check`: it deletes both before starting (leftovers of an
-earlier run), and on exit, pass or fail, deletes both again and waits until they are gone (up to
-180 s; a cleanup that does not finish also makes the script exit non-zero). Running it on a cluster
-in use is safe as long as nothing else lives in those two namespaces.
+## 5. Optional manual checks
 
 ### Node subnet
 

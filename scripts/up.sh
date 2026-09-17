@@ -66,4 +66,4 @@ done
 echo
 k get nodes -o wide
 echo
-echo "Ready. Context: kind-${CLUSTER_NAME}. Verify with scripts/check.sh"
+echo "Ready. Context: kind-${CLUSTER_NAME}."
